@@ -18,6 +18,9 @@
 // #include "geometry_msgs/Vector3.h"
 #include "vector"
 
+#define HUSARION_ROSBOT   0
+#define MY_ROSBOT2        1
+
 #define VL53L0XXshutPort hSens6
 
 namespace hFramework
@@ -50,6 +53,18 @@ struct hMUX
 /**
  * Container for wheel angular position.
  */
+#ifdef MY_ROSBOT2
+enum WheelSeq 
+{
+  FL=0, FR, RR, RL
+};
+
+struct WheelStates
+{
+  float angPos[4];
+  float angVel[4];
+};
+#else
 struct wheelsState
 {
   float FL;
@@ -57,6 +72,7 @@ struct wheelsState
   float FR;
   float RR;
 };
+#endif
 
 class ROSbot
 {
@@ -80,19 +96,33 @@ public:
 
   float getBatteryLevel();
   std::vector<float> getPose();
+#ifdef  MY_ROSBOT2
+  std::vector<float> getVelocity();
+#endif
   std::vector<float> getRanges(SensorType s = SENSOR_LASER);
   std::vector<float> getRPY();
 
   /**
    * @brief Get wheels angular positions in radians.
    */
+#ifdef MY_ROSBOT2
+  WheelStates getWheelStates();
+  void resetWheelStates();
+
+  void compensateRPY();     // Experimental function
+#else
   wheelsState getWheelsState();
+#endif
 
 private:
   void wheelUpdater();
   void batteryMonitor();
   void odometryUpdater();
   std::vector<float> rosbotPose;
+#ifdef  MY_ROSBOT2
+  std::vector<float> rosbotVelocity;
+  WheelStates wheelStates;
+#endif
   void reset_encoders();
   void reset_odom_vars();
   void reset_wheels();
@@ -114,11 +144,21 @@ private:
   float R_wheel_angular_velocity;
   float L_enc_speed;
   float R_enc_speed;
+#ifdef  MY_ROSBOT2
+  float robot_width = 0.280;    // meters
+  float wheel_radius = 0.065;   //meters
+  float tyre_deflection = 1.042;
+//  float diameter_mod = 1.24;
+  float diameter_mod = 1.395;   // 45/360 error included
+  uint16_t enc_res = 2797;      // encoder tics per wheel revolution
+  float tick_to_rad;
+#else  
   float robot_width = 0.195;   // meters
   float wheel_radius = 0.0425; //meters
   float tyre_deflection = 1.042;
   float diameter_mod = 1.24;
   uint16_t enc_res = 1633; // encoder tics per wheel revolution
+#endif
 
   float voltage_limit;
   float current_voltage;
@@ -175,6 +215,11 @@ private:
   float roll = 0;
   float pitch = 0;
   float yaw = 0;
+#ifdef  MY_ROSBOT2
+  float initRoll = 0;
+  float initPitch = 0;
+  float initYaw = 0;
+#endif  
 };
 
 extern ROSbot rosbot;

@@ -7,6 +7,10 @@ ROSbot rosbot;
 void ROSbot::initROSbot(SensorType s, ImuType i)
 {
     Serial.printf("ROSbot initialization begin\n");
+#ifdef MY_ROSBOT2
+    tick_to_rad = 2 * 3.14159 / enc_res;
+    resetWheelStates();
+#endif
     initIMU(i);
     initBatteryMonitor();
     initOdometry();
@@ -17,10 +21,17 @@ void ROSbot::initROSbot(SensorType s, ImuType i)
 
 void ROSbot::initWheelController()
 {
+#ifdef MY_ROSBOT2
+    wheelFL = new Wheel(hMotD, 0);      
+    wheelRL = new Wheel(hMotC, 0);
+    wheelFR = new Wheel(hMotA, 1);      // reverse
+    wheelRR = new Wheel(hMotB, 1);      // reverse
+#else    
     wheelFL = new Wheel(hMotD, 1);
     wheelRL = new Wheel(hMotC, 1);
     wheelFR = new Wheel(hMotA, 0);
     wheelRR = new Wheel(hMotB, 0);
+#endif
 
     wheelFL->begin();
     wheelRL->begin();
@@ -107,8 +118,10 @@ void ROSbot::batteryMonitor()
 
 void ROSbot::initBatteryMonitor(float voltage_threshold)
 {
+#ifndef MY_ROSBOT2      // for optimization    
     voltage_limit = voltage_threshold;
     sys.taskCreate(std::bind(&ROSbot::batteryMonitor, this));
+#endif
 }
 
 float ROSbot::getBatteryLevel()
@@ -123,6 +136,81 @@ void ROSbot::initOdometry()
     sys.taskCreate(std::bind(&ROSbot::odometryUpdater, this));
 }
 
+#ifdef  MY_ROSBOT2
+
+void ROSbot::odometryUpdater()
+{
+    float curr_ang_pos;
+
+    while (true)
+    {
+        enc_FR = wheelFR->getDistance();
+        enc_RR = wheelRR->getDistance();
+        enc_RL = wheelRL->getDistance();
+        enc_FL = wheelFL->getDistance();
+
+        wheel_FL_ang_pos = tick_to_rad * enc_FL;
+        wheel_FR_ang_pos = tick_to_rad * enc_FR;
+        wheel_RL_ang_pos = tick_to_rad * enc_RL;
+        wheel_RR_ang_pos = tick_to_rad * enc_RR;
+
+        wheelStates.angVel[FL] = (wheel_FL_ang_pos - wheelStates.angPos[FL]) / delay_s;
+        wheelStates.angPos[FL] = wheel_FL_ang_pos;        
+        wheelStates.angVel[FR] = (wheel_FR_ang_pos - wheelStates.angPos[FR]) / delay_s;
+        wheelStates.angPos[FR] = wheel_FR_ang_pos;        
+        wheelStates.angVel[RR] = (wheel_RR_ang_pos - wheelStates.angPos[RR]) / delay_s;
+        wheelStates.angPos[RR] = wheel_RR_ang_pos;
+        wheelStates.angVel[RL] = (wheel_RL_ang_pos - wheelStates.angPos[RL]) / delay_s;
+        wheelStates.angPos[RL] = wheel_RL_ang_pos;        
+
+        enc_L = (enc_FL + enc_RL) / (2 * tyre_deflection);
+        enc_R = (enc_FR + enc_RR) / (2 * tyre_deflection);
+
+        curr_ang_pos = tick_to_rad * enc_L;
+        wheel_L_ang_vel = (curr_ang_pos - wheel_L_ang_pos) / delay_s;
+        wheel_L_ang_pos = curr_ang_pos;
+
+        curr_ang_pos = tick_to_rad * enc_R;
+        wheel_R_ang_vel = (curr_ang_pos - wheel_R_ang_pos) / delay_s;
+        wheel_R_ang_pos = curr_ang_pos;
+
+        curr_ang_pos = (wheel_R_ang_pos - wheel_L_ang_pos) * wheel_radius / (robot_width * diameter_mod);
+        robot_angular_vel = (curr_ang_pos - robot_angular_pos) / delay_s;
+        robot_angular_pos = curr_ang_pos;
+
+        curr_ang_pos = (wheel_L_ang_vel * wheel_radius + robot_angular_vel * robot_width / 2);
+        robot_x_vel = curr_ang_pos * cos(robot_angular_pos);
+        robot_y_vel = curr_ang_pos * sin(robot_angular_pos);
+        robot_x_pos = robot_x_pos + robot_x_vel * delay_s;
+        robot_y_pos = robot_y_pos + robot_y_vel * delay_s;
+        
+        sys.delay(loop_delay);
+    }
+}
+
+std::vector<float> ROSbot::getVelocity()
+{
+    rosbotVelocity.clear();
+    rosbotVelocity.push_back(robot_x_vel);
+    rosbotVelocity.push_back(robot_y_vel);
+    rosbotVelocity.push_back(robot_angular_vel);
+    return rosbotVelocity;
+}
+
+void ROSbot::resetWheelStates()
+{
+    for (int i=0; i<4; i++) {
+        wheelStates.angPos[i] = 0.0;
+        wheelStates.angVel[i] = 0.0;
+    }
+}
+
+WheelStates ROSbot::getWheelStates()
+{
+    return wheelStates;
+}
+
+#else
 wheelsState ROSbot::getWheelsState()
 {
     wheelsState ws;
@@ -165,6 +253,7 @@ void ROSbot::odometryUpdater()
         sys.delay(loop_delay);
     }
 }
+#endif  // MY_ROSBOT2
 
 std::vector<float> ROSbot::getPose()
 {
@@ -341,11 +430,19 @@ void ROSbot::initIMU(ImuType i)
 
 std::vector<float> ROSbot::getRPY()
 {
+//#ifdef  MY_ROSBOT2	// compensate RPY values
+//    imuArray.clear();
+//    imuArray.push_back(roll - initRoll);
+//    imuArray.push_back(pitch - initPitch);
+//    imuArray.push_back(yaw - initYaw);
+//    return imuArray;
+//#else
     imuArray.clear();
     imuArray.push_back(roll);
     imuArray.push_back(pitch);
     imuArray.push_back(yaw);
     return imuArray;
+//#endif
 }
 
 void ROSbot::eulerAnglesTask()
@@ -356,4 +453,24 @@ void ROSbot::eulerAnglesTask()
         sys.delay(50);
     }
 }
+
+#ifdef  MY_ROSBOT2      // Experimental function
+void ROSbot::compensateRPY()
+{
+    initRoll = 0; initPitch = 0; initYaw = 0;
+    for (int i=0; i<20; i++) {
+        imu.getEulerAngles(&roll, &pitch, &yaw);
+        initRoll += roll;
+        initPitch += pitch;
+        initYaw += yaw;
+    	Serial.printf("R/P/Y reading: %f, %f, %f\r\n", roll, pitch, yaw);
+        sys.delay(10);
+    }
+    initRoll = initRoll / 20;
+    initPitch = initPitch / 20;
+    initYaw = initYaw / 20;
+    Serial.printf("init RPY: %f, %f, %f\r\n", initRoll, initPitch, initYaw);
+}
+#endif  
+
 } // namespace hFramework
