@@ -32,3 +32,7 @@ This section describes how to build hFramework yourself,
     ninja
     ```
     Substitute `core2` with `core2mini` if building for CORE2mini.
+
+## Reamrk
+
+Husarion hFramework clone + mybot adaptation
